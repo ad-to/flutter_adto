@@ -5,6 +5,19 @@ All notable changes to flutter_adto are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-11-15
+
+### Fixed
+
+- **Slow Android phones no longer send an install without its device.** The device id and
+  hardware reads had 1.5 s each; on a slow phone's first launch they timed out, and about 2 % of
+  Android installs reached the server with no device id, model, manufacturer or CPU. They now
+  get as long as the install referrer read beside them already waits
+  (`installReferrerTimeout`, 5 s by default), so a normal launch is no slower.
+- **Android never reports a build string as its OS version.** When the hardware read failed,
+  `os_version` fell back to dart:io's value, which on Android is the build's display string
+  (`M1AJQ.T585XXU7CUH1`). Android now sends no version in that case.
+
 ## [1.0.0] - 2026-11-12
 
 flutter_adto is the SDK of AdTo, a new service. It starts from flutter_dectog 1.0.x, the DecTog
