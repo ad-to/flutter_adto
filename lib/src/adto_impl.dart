@@ -16,6 +16,7 @@ import 'services/device_settings_service.dart';
 import 'services/event_queue_service.dart';
 import 'services/identifier_channel.dart';
 import 'services/install_classifier.dart';
+import 'services/install_device_reads.dart';
 import 'services/install_referrer_service.dart';
 import 'services/install_state_store.dart';
 import 'services/link_deduper.dart';
@@ -173,8 +174,9 @@ final class FlutterAdtoImpl implements FlutterAdto {
   /// the host app on a dead connection.
   static const Duration _httpTimeout = Duration(seconds: 30);
 
-  /// Budgets. Auxiliary reads (device id, hardware, network, WebView
-  /// UA, Meta IPC, launch info, install dates) each get 1.5 s and run
+  /// Budgets. Auxiliary reads (network, WebView UA, Meta IPC, launch info,
+  /// install dates; the device id and hardware too, which on Android get
+  /// the install referrer's longer wait) each get 1.5 s and run
   /// concurrently (Branch waits 0.5 s for third-party signals, Adjust caps
   /// the OEM readers at 2–3 s); the AdServices token 0.5 s (Branch's
   /// dispatch_group_wait); the pasteboard read longer because on iOS 16+ it
@@ -1484,16 +1486,27 @@ final class FlutterAdtoImpl implements FlutterAdto {
       oemStores: _oemStoreReferrers(config),
       provider: config.installReferrerProvider,
     );
+    // The two reads an install is poorest without get as long as the
+    // referrer read beside them already takes (install_device_reads.dart).
+    final deviceReadBudget = deviceReadTimeout(
+      isAndroid: Platform.isAndroid,
+      aux: _auxTimeout,
+      referrerTimeout: config.installReferrerTimeout,
+    );
     final deviceIdFuture =
         collectDeviceData
             ? _guard(
               () =>
                   _deviceIdentityService.getDeviceId(persist: persistDeviceId),
+              timeout: deviceReadBudget,
             )
             : Future<String?>.value(null);
     final hardwareFuture =
         collectDeviceData
-            ? _guard(() => _deviceHardwareService.collect())
+            ? _guard(
+              () => _deviceHardwareService.collect(),
+              timeout: deviceReadBudget,
+            )
             : Future<DeviceHardwareInfo?>.value(null);
     final networkFuture =
         collectDeviceData
@@ -1568,9 +1581,12 @@ final class FlutterAdtoImpl implements FlutterAdto {
       appVersion: appInfo?.version,
       appBuildNumber: appInfo?.buildNumber,
       os: deviceInfo['os'] as String?,
-      // Prefer device_info_plus's precise version; fall back to the
-      // coarse dart:io value.
-      osVersion: hardware?.osVersion ?? deviceInfo['os_version'] as String?,
+      // device_info_plus's version; dart:io's only where it holds one.
+      osVersion: installOsVersion(
+        isAndroid: Platform.isAndroid,
+        hardwareVersion: hardware?.osVersion,
+        platformVersion: deviceInfo['os_version'] as String?,
+      ),
       language: deviceInfo['language'] as String?,
       timezone: deviceInfo['timezone'] as String?,
       utcOffsetMin: deviceInfo['utc_offset_min'] as int?,
