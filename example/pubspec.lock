@@ -188,14 +188,14 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.0.0"
+    version: "1.0.1"
   flutter_adto_adid:
     dependency: "direct main"
     description:
       path: "../packages/flutter_adto_adid"
       relative: true
     source: path
-    version: "1.0.0"
+    version: "1.0.1"
   flutter_lints:
     dependency: "direct dev"
     description:

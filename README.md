@@ -8,6 +8,7 @@
 
 *Deep links, deferred deep links and install attribution for Flutter apps on AdTo*
 
+[![Pub Version](https://img.shields.io/pub/v/flutter_adto?label=flutter_adto)](https://pub.dev/packages/flutter_adto)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 ![Flutter >= 3.29](https://img.shields.io/badge/Flutter->=3.29-02569B?style=flat-square&logo=flutter&logoColor=white)
 ![iOS 15+](https://img.shields.io/badge/iOS-15%2B-000000?style=flat-square&logo=apple&logoColor=white)
