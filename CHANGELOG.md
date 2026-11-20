@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tried again while it is younger than that.
 - **A retry in the same session reuses the first-launch pasteboard read** instead of reading
   again (on iOS, asking again).
+- **iOS: the paste alert no longer freezes the app.** On iOS 16+ the first-launch pasteboard read
+  waits for the user to answer "Allow Paste", and it held the main thread while it waited. Flutter
+  runs Dart on that thread, so the app's UI and `initialize()` stopped until the user answered
+  (about 20 seconds in a test). The read now runs on a background queue: the app keeps drawing,
+  `initialize()` returns once the install is registered, and a late "Allow Paste" still upgrades
+  the install through its claim.
 
 ### Added
 

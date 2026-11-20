@@ -27,6 +27,7 @@ import AdServices
  *  - pasteboardHasUrl() — UIPasteboard.hasURLs, a metadata check that shows
  *    NO paste alert. readPasteboardUrl() — the URL (string fallback) only
  *    when hasURLs; THIS read shows the iOS 16+ paste alert. ≤ 2048 chars.
+ *    readPasteboardUrl(_:) runs it off the main thread, completes on it.
  *    pasteboardChangeCount() — so the SDK clears only what it read.
  *    clearPasteboard() — after an AdTo link was credited.
  *  - urlSchemes() — Info.plist CFBundleURLTypes, for diagnostics().
@@ -141,6 +142,18 @@ enum AdtoDevice {
     let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.isEmpty || value.count > pasteboardMaxLength { return nil }
     return value
+  }
+
+  /// readPasteboardUrl() on a background queue, completing on the main
+  /// thread. On iOS 16+ the read waits for the user to answer the paste
+  /// alert and holds its thread until then. Flutter runs Dart on the main
+  /// thread, so a read there froze the SDK and the app's UI until the user
+  /// answered. UIPasteboard is safe to use off the main thread.
+  static func readPasteboardUrl(_ completion: @escaping (String?) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let value = readPasteboardUrl()
+      DispatchQueue.main.async { completion(value) }
+    }
   }
 
   /// Metadata only, no paste alert.
