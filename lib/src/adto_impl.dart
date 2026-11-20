@@ -238,7 +238,8 @@ final class FlutterAdtoImpl implements FlutterAdto {
   /// concurrently (Branch waits 0.5 s for third-party signals, Adjust caps
   /// the OEM readers at 2–3 s); the AdServices token 0.5 s (Branch's
   /// dispatch_group_wait); the pasteboard read longer because on iOS 16+ it
-  /// blocks on the system alert the user has to answer anyway.
+  /// waits for the user to answer the system alert (natively off the main
+  /// thread, so nothing else waits with it).
   static const Duration _auxTimeout = Duration(milliseconds: 1500);
   static const Duration _asaTimeout = Duration(milliseconds: 500);
   static const Duration _pasteboardTimeout = Duration(seconds: 6);

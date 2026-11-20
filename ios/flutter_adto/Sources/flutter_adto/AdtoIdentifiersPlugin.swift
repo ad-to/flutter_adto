@@ -15,7 +15,7 @@ import UIKit
  *  - excludeFromBackup({ path }) -> Bool
  *  - getAttributionToken -> String | null (AdServices)
  *  - pasteboardHasUrl -> Bool (no alert) · readPasteboardUrl -> String |
- *    null (iOS 16+ alert) · pasteboardChangeCount -> Int · clearPasteboard
+ *    null (iOS 16+ alert; read off the main thread) · pasteboardChangeCount -> Int · clearPasteboard
  *    -> Bool
  *  - getUrlSchemes -> [String]
  *  - Platform view `adto_paste_control` (UIPasteControl, iOS 16+), which
@@ -52,7 +52,8 @@ public class AdtoIdentifiersPlugin: NSObject, FlutterPlugin {
     case "pasteboardHasUrl":
       result(AdtoDevice.pasteboardHasUrl())
     case "readPasteboardUrl":
-      result(AdtoDevice.readPasteboardUrl())
+      // Off the main thread: the read waits on the paste alert.
+      AdtoDevice.readPasteboardUrl { result($0) }
     case "clearPasteboard":
       result(AdtoDevice.clearPasteboard())
     case "getUrlSchemes":
