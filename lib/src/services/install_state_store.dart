@@ -23,9 +23,10 @@ import 'sdk_storage.dart';
 ///    because the value no longer matches — the flow starts over instead of
 ///    silently skipping the install (the directory is also excluded from
 ///    backup, this is the second line of defence).
-///  - `attempt` + `abandoned`: cross-launch retries are bounded (Adjust's
-///    package queue backs off; Branch re-runs on the next foreground) — ten
-///    launches without a 2xx and the SDK stops trying.
+///  - `attempt` + `abandoned`: tries are counted (the server stores the
+///    count) and the SDK stops trying once the install is [maxAge] old.
+///    Retries in the same session (adto_impl.dart) count too, so the limit
+///    is an age, not a number of tries.
 ///  - `referrer_claimed` / `referrer_status` / `referrer_launches`: the Play
 ///    referrer is re-read on later launches until it is definitive, and the
 ///    "claimed" flag is written only after the server acknowledged the
@@ -181,15 +182,16 @@ enum InstallDecisionKind {
   /// Run the install registration now (fresh install, or a retry).
   start,
 
-  /// A recent `pending` claim belongs to a launch that is probably still in
+  /// A recent `pending` claim belongs to a try that is probably still in
   /// flight (another isolate, a killed-and-restarted process inside the
-  /// TTL): skip this launch.
+  /// claim window): skip it for now.
   inFlight,
 
   /// The install was registered before.
   alreadyTracked,
 
-  /// Ten launches without a success: the SDK stopped trying.
+  /// The install is [InstallStateStore.maxAge] old and still not
+  /// registered: the SDK stopped trying.
   abandoned,
 }
 
@@ -217,14 +219,17 @@ class InstallStateStore {
 
   static const String fileName = '.adto_install.json';
 
-  /// How long a `pending` claim suppresses a re-POST before it is assumed
-  /// to belong to a launch that died mid-flight.
-  static const Duration pendingClaimTtl = Duration(minutes: 5);
+  /// How long a `pending` claim holds off another try before it is taken to
+  /// belong to a try that never finished (the app was closed). The longest
+  /// try (the reads, two 15 s posts and a back-off of at most 10 s) ends
+  /// within a minute.
+  static const Duration pendingClaimTtl = Duration(seconds: 90);
 
-  /// Cross-launch cap on install POST attempts (Adjust keeps retrying with
-  /// backoff; ten launches is our bound — after that the install is
-  /// abandoned client-side and the server never hears about it).
-  static const int maxAttempts = 10;
+  /// How long after the first try the SDK keeps trying: an install that
+  /// old is abandoned client-side and the server never hears about it. An
+  /// older SDK abandoned after ten tries instead; such an install younger
+  /// than this is tried again.
+  static const Duration maxAge = Duration(days: 14);
 
   /// How many later launches re-read a non-definitive referrer.
   static const int maxReferrerLaunches = 5;
@@ -313,7 +318,8 @@ class InstallStateStore {
       case InstallStatus.tracked:
         return InstallDecision(InstallDecisionKind.alreadyTracked, existing);
       case InstallStatus.abandoned:
-        return InstallDecision(InstallDecisionKind.abandoned, existing);
+        // Given up by an older SDK after ten tries: tried again while young.
+        return _retry(existing, t);
       case InstallStatus.pending:
         final attemptedAt = existing.attemptedAt;
         if (attemptedAt != null &&
@@ -321,7 +327,8 @@ class InstallStateStore {
             !t.isBefore(attemptedAt)) {
           return InstallDecision(InstallDecisionKind.inFlight, existing);
         }
-        return _retry(existing, t);
+        // The claim outlived any try: the app was closed before an answer.
+        return _retry(existing.copyWith(lastError: 'interrupted'), t);
       case InstallStatus.failed:
         return _retry(existing, t);
     }
@@ -354,12 +361,15 @@ class InstallStateStore {
   }
 
   Future<InstallDecision> _retry(InstallState existing, DateTime now) async {
-    if (existing.attempt >= maxAttempts) {
-      final gone = existing.copyWith(
-        status: InstallStatus.abandoned,
-        lastAttemptAt: now,
-      );
-      await _persist(gone);
+    if (now.difference(existing.createdAt) >= maxAge) {
+      final gone =
+          existing.status == InstallStatus.abandoned
+              ? existing
+              : existing.copyWith(
+                status: InstallStatus.abandoned,
+                lastAttemptAt: now,
+              );
+      if (!identical(gone, existing)) await _persist(gone);
       return InstallDecision(InstallDecisionKind.abandoned, gone);
     }
     final next = existing.copyWith(
@@ -392,14 +402,15 @@ class InstallStateStore {
     return next;
   }
 
-  /// The POST failed for this launch: the next launch retries (bounded).
-  Future<InstallState?> markFailed(String error, {DateTime? now}) async {
+  /// The try failed for [reason] (install_failure.dart): a later try, in
+  /// this session or a later launch, reports it as `previous_error`.
+  Future<InstallState?> markFailed(String reason, {DateTime? now}) async {
     final s = _current;
     if (s == null) return null;
     final next = s.copyWith(
       status: InstallStatus.failed,
       lastAttemptAt: now ?? DateTime.now(),
-      lastError: error.length > 512 ? error.substring(0, 512) : error,
+      lastError: reason.length > 512 ? reason.substring(0, 512) : reason,
     );
     await _persist(next);
     return next;

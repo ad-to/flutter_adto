@@ -125,8 +125,13 @@ class AdtoAppInstallRequest {
   /// The install id this registration replaces (the server had lost it).
   final String? recoveredFrom;
 
-  /// Cross-launch attempt number of this POST (1 = first launch).
+  /// Which try this POST is (1 = the first, at the first launch).
   final int? attempt;
+
+  /// Why the try before this one failed (install_failure.dart), on a
+  /// retry only: `timeout`, `dns`, `tls`, `connection`,
+  /// `http_<status>[:<code>]`, `interrupted` or `other`.
+  final String? previousError;
 
   /// Device-clock ISO times: when the install flow first started / when
   /// this POST left (Adjust `created_at` vs `sent_at`).
@@ -210,6 +215,7 @@ class AdtoAppInstallRequest {
     this.installAttemptId,
     this.recoveredFrom,
     this.attempt,
+    this.previousError,
     this.createdAtClient,
     this.sentAtClient,
     this.referrerStatus,
@@ -277,6 +283,7 @@ class AdtoAppInstallRequest {
     if (installAttemptId != null) json['install_attempt_id'] = installAttemptId;
     if (recoveredFrom != null) json['recovered_from'] = recoveredFrom;
     if (attempt != null) json['attempt'] = attempt;
+    if (previousError != null) json['previous_error'] = previousError;
     if (createdAtClient != null) json['created_at_client'] = createdAtClient;
     if (sentAtClient != null) json['sent_at_client'] = sentAtClient;
     if (referrerStatus != null) json['referrer_status'] = referrerStatus;
@@ -345,6 +352,7 @@ class AdtoAppInstallRequest {
       installAttemptId: json['install_attempt_id'] as String?,
       recoveredFrom: json['recovered_from'] as String?,
       attempt: (json['attempt'] as num?)?.toInt(),
+      previousError: json['previous_error'] as String?,
       createdAtClient: json['created_at_client'] as String?,
       sentAtClient: json['sent_at_client'] as String?,
       referrerStatus: json['referrer_status'] as String?,
@@ -370,7 +378,7 @@ class AdtoAppInstallRequest {
         'appBuildNumber: $appBuildNumber, os: $os, osVersion: $osVersion, language: $language, '
         'timezone: $timezone, utcOffsetMin: $utcOffsetMin, '
         'installReferrer: $installReferrer, referrerStore: $referrerStore, '
-        'referrerStatus: $referrerStatus, installState: $installState, attempt: $attempt, '
+        'referrerStatus: $referrerStatus, installState: $installState, attempt: $attempt, previousError: $previousError, '
         'installAttemptId: $installAttemptId, deviceId: $deviceId, '
         'deviceModel: $deviceModel, deviceKind: $deviceKind, '
         'screenWidth: $screenWidth, screenHeight: $screenHeight, '

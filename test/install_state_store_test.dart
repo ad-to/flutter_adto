@@ -88,39 +88,103 @@ void main() {
   );
 
   test(
-    'a recent pending claim is in flight; an expired one is retried',
+    'a claim younger than the claim window is in flight; an older one never finished, and its retry says so',
     () async {
       final t0 = DateTime(2026, 10, 12, 10, 0);
       await store.begin(now: t0);
       await restart();
       expect(
-        (await store.begin(now: t0.add(const Duration(minutes: 2)))).kind,
+        (await store.begin(now: t0.add(const Duration(seconds: 30)))).kind,
         InstallDecisionKind.inFlight,
       );
       await restart();
+      // The longest try (reads, two posts, a back-off) ends within a
+      // minute: a claim two minutes old belongs to an app that was closed.
       final retried = await store.begin(
-        now: t0.add(const Duration(minutes: 6)),
+        now: t0.add(const Duration(minutes: 2)),
       );
       expect(retried.kind, InstallDecisionKind.start);
       expect(retried.state!.attempt, 2);
+      expect(retried.state!.lastError, 'interrupted');
     },
   );
 
-  test('ten failed attempts abandon the install', () async {
-    await store.begin();
-    for (var i = 1; i < InstallStateStore.maxAttempts; i++) {
-      await store.markFailed('x');
+  test(
+    'failed tries are retried however many there are, until the install is 14 days old',
+    () async {
+      final t0 = DateTime(2026, 10, 12, 10, 0);
+      await store.begin(now: t0);
+      for (var i = 2; i <= 30; i++) {
+        await store.markFailed('timeout', now: t0.add(Duration(hours: i)));
+        await restart();
+        final d = await store.begin(now: t0.add(Duration(hours: i)));
+        expect(d.kind, InstallDecisionKind.start, reason: 'attempt $i');
+        expect(d.state!.attempt, i);
+      }
+      await store.markFailed('timeout');
       await restart();
-      final d = await store.begin();
-      expect(d.kind, InstallDecisionKind.start, reason: 'attempt ${i + 1}');
-    }
-    await store.markFailed('x');
-    await restart();
-    final d = await store.begin();
-    expect(d.kind, InstallDecisionKind.abandoned);
-    await restart();
-    expect((await store.begin()).kind, InstallDecisionKind.abandoned);
-  });
+      final d = await store.begin(
+        now: t0.add(InstallStateStore.maxAge + const Duration(minutes: 1)),
+      );
+      expect(d.kind, InstallDecisionKind.abandoned);
+      await restart();
+      expect(
+        (await store.begin(
+          now: t0.add(InstallStateStore.maxAge + const Duration(days: 1)),
+        )).kind,
+        InstallDecisionKind.abandoned,
+      );
+    },
+  );
+
+  /// What an older SDK left after ten failed launches.
+  void writeAbandoned(DateTime createdAt) {
+    File('${tempDir.path}/${InstallStateStore.fileName}').writeAsStringSync(
+      jsonEncode({
+        'v': 2,
+        'status': 'abandoned',
+        'install_attempt_id': '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b',
+        'attempt': 10,
+        'created_at': createdAt.toIso8601String(),
+        'last_error': 'AdtoError: Failed to log app install: request timed out',
+        'referrer_claimed': false,
+        'referrer_launches': 0,
+        'asa_claimed': false,
+        'plugin_version': '1.0.1',
+      }),
+    );
+  }
+
+  test(
+    'an install an older SDK gave up on after ten tries is retried while it is younger than 14 days',
+    () async {
+      final now = DateTime(2026, 11, 20, 9, 0);
+      writeAbandoned(now.subtract(const Duration(days: 2)));
+      await restart();
+      final d = await store.begin(now: now);
+      expect(d.kind, InstallDecisionKind.start);
+      expect(d.state!.attempt, 11);
+      expect(
+        d.state!.installAttemptId,
+        '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b',
+        reason: 'the same idempotency key',
+      );
+      expect(
+        d.state!.lastError,
+        'AdtoError: Failed to log app install: request timed out',
+      );
+    },
+  );
+
+  test(
+    'an install given up on more than 14 days after it began stays given up',
+    () async {
+      final now = DateTime(2026, 11, 20, 9, 0);
+      writeAbandoned(now.subtract(const Duration(days: 20)));
+      await restart();
+      expect((await store.begin(now: now)).kind, InstallDecisionKind.abandoned);
+    },
+  );
 
   test(
     'a sentinel whose package first-install time changed is a stale restore and is discarded',

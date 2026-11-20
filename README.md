@@ -171,6 +171,11 @@ registration (a Play referrer that was not ready in time, a link pasted through
 only updated to an SDK build (`installState == 'update'`) is never fingerprint-matched, and a
 retried first launch can never register a second install.
 
+When the first launch has no connection, the registration is tried again in the same session:
+after a wait (30 seconds, then longer), when the app comes back to the foreground, and as soon as
+a queued event goes through. Later launches keep trying until the install is 14 days old, so
+`onAppInstalled` can also emit for the first time well after `initialize`.
+
 ### Deterministic signals
 
 - **Android install referrers.** AdTo puts the click id in the store's install referrer

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_adto/flutter_adto.dart';
 import 'package:flutter_adto/src/adto_impl.dart';
 import 'package:flutter_adto/src/services/device_identity_service.dart';
@@ -1020,6 +1021,275 @@ void main() {
         await h.paste('https://demo.adto.app/other?adto_click=c2');
         await wait(600);
         expect(h.pasteboardClears, 0);
+      },
+    );
+  });
+
+  // The install goes out at the app's first launch; a launch without a
+  // connection used to leave it for the next launch while identify, which
+  // rides the event queue, went through: a customer with no install. Now
+  // the SDK tries again in the same session.
+  group('install retries in the same session', () {
+    List<http.Request> installs() =>
+        h.requests.where((r) => r.url.path == '/api/v1/app-installs').toList();
+    Map<String, dynamic> body(http.Request r) =>
+        jsonDecode(r.body) as Map<String, dynamic>;
+
+    test(
+      'an install that failed at launch is retried a little later, and says why the first try failed',
+      () async {
+        FlutterAdtoImpl.installRetryWaits = const [Duration(milliseconds: 50)];
+        var offline = true;
+        h.answer = (r) async {
+          if (offline && r.url.path == '/api/v1/app-installs') {
+            throw const SocketException("Failed host lookup: 'api.adto.app'");
+          }
+          return null;
+        };
+        await FlutterAdto().initialize(config);
+        expect(installs(), hasLength(2), reason: 'two tries at launch');
+        expect(FlutterAdto().currentAppInstall, isNull);
+
+        offline = false;
+        await h.settle();
+        expect(installs(), hasLength(3));
+        expect(body(installs().first).containsKey('previous_error'), isFalse);
+        expect(body(installs().last)['attempt'], 2);
+        expect(body(installs().last)['previous_error'], 'dns');
+        expect(
+          body(installs().last)['install_attempt_id'],
+          body(installs().first)['install_attempt_id'],
+        );
+        expect(FlutterAdto().currentAppInstall, isNotNull);
+      },
+    );
+
+    test(
+      'a refusal the same request would meet again waits for the next launch',
+      () async {
+        FlutterAdtoImpl.installRetryWaits = const [Duration(milliseconds: 20)];
+        FlutterAdtoImpl.installRetrySpacing = Duration.zero;
+        h.answer = (r) async {
+          if (r.url.path != '/api/v1/app-installs') return null;
+          return http.Response(
+            '{"error":{"code":"invalid_request","message":"no"}}',
+            400,
+            headers: {'content-type': 'application/json'},
+          );
+        };
+        await FlutterAdto().initialize(config);
+        await FlutterAdto().identify(customerId: 'refused-1');
+        await FlutterAdto().flush();
+        await h.settle();
+        expect(installs(), hasLength(1));
+        expect(h.paths, contains('POST /api/v1/events'));
+      },
+    );
+
+    test(
+      'an event batch with no install id waits for the install try in flight, and carries its id',
+      () async {
+        final answered = Completer<void>();
+        h.answer = (r) async {
+          if (r.url.path == '/api/v1/app-installs') await answered.future;
+          return null;
+        };
+        final initialized = FlutterAdto().initialize(config);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(installs(), hasLength(1), reason: 'the try is in flight');
+        await FlutterAdto().identify(customerId: 'waits-1');
+        final flushed = FlutterAdto().flush();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(h.paths, isNot(contains('POST /api/v1/events')));
+
+        answered.complete();
+        await initialized;
+        await flushed;
+        final events = h.requests.firstWhere(
+          (r) => r.url.path == '/api/v1/events',
+        );
+        expect(
+          body(events)['install_id'],
+          FlutterAdto().currentAppInstall!.installId,
+        );
+      },
+    );
+
+    test(
+      'an event batch that goes through starts an install that had no connection again at once',
+      () async {
+        FlutterAdtoImpl.installRetryWaits = const [Duration(hours: 1)];
+        FlutterAdtoImpl.installRetrySpacing = Duration.zero;
+        var offline = true;
+        h.answer = (r) async {
+          if (offline && r.url.path == '/api/v1/app-installs') {
+            throw const SocketException("Failed host lookup: 'api.adto.app'");
+          }
+          return null;
+        };
+        await FlutterAdto().initialize(config);
+        expect(installs(), hasLength(2));
+
+        offline = false;
+        await FlutterAdto().identify(customerId: 'back-1');
+        await FlutterAdto().flush();
+        await h.settle();
+        expect(installs(), hasLength(3));
+        expect(body(installs().last)['previous_error'], 'dns');
+        expect(FlutterAdto().currentAppInstall, isNotNull);
+      },
+    );
+
+    // A delivered batch or the app's return shows the connection works, not
+    // that the install endpoint recovered: every waiting phone would retry
+    // a failing server every 30 seconds.
+    test(
+      'an install the server refused keeps its back-off when a batch goes through or the app comes back',
+      () async {
+        FlutterAdtoImpl.installRetryWaits = const [Duration(hours: 1)];
+        FlutterAdtoImpl.installRetrySpacing = Duration.zero;
+        h.answer = (r) async {
+          if (r.url.path != '/api/v1/app-installs') return null;
+          return http.Response('<html>busy</html>', 503);
+        };
+        await FlutterAdto().initialize(config);
+        expect(installs(), hasLength(2));
+
+        await FlutterAdto().identify(customerId: 'busy-1');
+        await FlutterAdto().flush();
+        final binding = TestWidgetsFlutterBinding.instance;
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await h.settle();
+        expect(h.paths, contains('POST /api/v1/events'));
+        expect(installs(), hasLength(2));
+      },
+    );
+
+    test('a Retry-After longer than the next wait is honoured', () async {
+      FlutterAdtoImpl.installRetryWaits = const [Duration(milliseconds: 10)];
+      var limited = true;
+      h.answer = (r) async {
+        if (limited && r.url.path == '/api/v1/app-installs') {
+          return http.Response(
+            '{"error":{"code":"rate_limited","message":"slow down"}}',
+            429,
+            headers: {'content-type': 'application/json', 'retry-after': '1'},
+          );
+        }
+        return null;
+      };
+      await FlutterAdto().initialize(config);
+      expect(installs(), hasLength(2));
+      limited = false;
+      await h.settle();
+      expect(installs(), hasLength(2), reason: 'the server asked for a second');
+      await Future<void>.delayed(const Duration(milliseconds: 1000));
+      expect(installs(), hasLength(3));
+      expect(body(installs().last)['previous_error'], 'http_429:rate_limited');
+    });
+
+    test(
+      'a try that ends after the SDK was replaced schedules no retry',
+      () async {
+        final answered = Completer<void>();
+        h.answer = (r) async {
+          if (r.url.path != '/api/v1/app-installs') return null;
+          await answered.future;
+          throw const SocketException("Failed host lookup: 'api.adto.app'");
+        };
+        unawaited(FlutterAdto().initialize(config));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(installs(), hasLength(1));
+
+        FlutterAdtoImpl.resetForTest(
+          httpClient: MockClient((_) async => http.Response('{}', 200)),
+        );
+        FlutterAdtoImpl.installRetryWaits = const [Duration(milliseconds: 20)];
+        answered.complete();
+        // The old SDK's two tries at launch end; nothing follows them.
+        await Future<void>.delayed(const Duration(milliseconds: 1600));
+        expect(installs(), hasLength(2));
+      },
+    );
+
+    test(
+      'coming back to the app starts an install that had no connection again',
+      () async {
+        FlutterAdtoImpl.installRetryWaits = const [Duration(hours: 1)];
+        FlutterAdtoImpl.installRetrySpacing = Duration.zero;
+        var down = true;
+        h.answer = (r) async {
+          if (down && r.url.path == '/api/v1/app-installs') {
+            throw const SocketException('Connection reset by peer');
+          }
+          return null;
+        };
+        await FlutterAdto().initialize(config);
+        expect(installs(), hasLength(2));
+
+        down = false;
+        final binding = TestWidgetsFlutterBinding.instance;
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await h.settle();
+        expect(installs(), hasLength(3));
+        expect(FlutterAdto().currentAppInstall, isNotNull);
+      },
+    );
+
+    /// A sentinel as an earlier launch left it.
+    void writeSentinel(Map<String, Object?> fields) {
+      File('${h.dir.path}/${InstallStateStore.fileName}').writeAsStringSync(
+        jsonEncode({
+          'v': 2,
+          'install_attempt_id': '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b',
+          'referrer_claimed': false,
+          'referrer_launches': 0,
+          'asa_claimed': false,
+          'plugin_version': packageVersion,
+          ...fields,
+        }),
+      );
+    }
+
+    test(
+      'a try the app was closed during is reported as interrupted at the next launch',
+      () async {
+        final began = DateTime.now().subtract(const Duration(minutes: 2));
+        writeSentinel({
+          'status': 'pending',
+          'attempt': 1,
+          'created_at': began.toIso8601String(),
+          'attempted_at': began.toIso8601String(),
+        });
+        await FlutterAdto().initialize(config);
+        final sent = body(installs().single);
+        expect(sent['attempt'], 2);
+        expect(sent['previous_error'], 'interrupted');
+        expect(
+          sent['install_attempt_id'],
+          '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b',
+        );
+      },
+    );
+
+    test(
+      'an install the previous SDK gave up on is registered again while it is younger than 14 days',
+      () async {
+        final began = DateTime.now().subtract(const Duration(days: 2));
+        writeSentinel({
+          'status': 'abandoned',
+          'attempt': 10,
+          'created_at': began.toIso8601String(),
+          'last_error':
+              "AdtoError: Network error: ClientException with SocketException: Failed host lookup: 'api.adto.app'",
+        });
+        await FlutterAdto().initialize(config);
+        final sent = body(installs().single);
+        expect(sent['attempt'], 11);
+        expect(sent['previous_error'], 'dns');
+        expect(FlutterAdto().currentAppInstall, isNotNull);
       },
     );
   });
