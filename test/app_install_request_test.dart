@@ -200,6 +200,7 @@ void main() {
       installReferrer: 'adto_click=abc&adto_l=demo/welcome',
       installAttemptId: '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b',
       attempt: 2,
+      previousError: 'http_401:stale_timestamp',
       createdAtClient: '2026-10-12T09:00:00.000Z',
       sentAtClient: '2026-10-12T09:00:04.000Z',
       referrerStatus: 'ok',
@@ -217,6 +218,7 @@ void main() {
     final json = withAll.toJson();
     expect(json['install_attempt_id'], '8b1e2b0a-7c1d-4f3e-9a2b-1c2d3e4f5a6b');
     expect(json['attempt'], 2);
+    expect(json['previous_error'], 'http_401:stale_timestamp');
     expect(json['created_at_client'], '2026-10-12T09:00:00.000Z');
     expect(json['sent_at_client'], '2026-10-12T09:00:04.000Z');
     expect(json['referrer_status'], 'ok');
@@ -235,6 +237,7 @@ void main() {
     for (final key in [
       'install_attempt_id',
       'attempt',
+      'previous_error',
       'created_at_client',
       'sent_at_client',
       'referrer_status',
@@ -255,6 +258,7 @@ void main() {
     final roundtripped = AdtoAppInstallRequest.fromJson(withAll.toJson());
     expect(roundtripped.installAttemptId, withAll.installAttemptId);
     expect(roundtripped.attempt, 2);
+    expect(roundtripped.previousError, 'http_401:stale_timestamp');
     expect(roundtripped.referrerClickServerTs, 1760000001000);
     expect(roundtripped.googlePlayInstant, isFalse);
     expect(roundtripped.referrerStore, 'google_play');

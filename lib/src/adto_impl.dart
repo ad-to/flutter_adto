@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode, visibleForTesting;
+import 'package:flutter/widgets.dart'
+    show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:rxdart/rxdart.dart';
@@ -17,6 +19,7 @@ import 'services/event_queue_service.dart';
 import 'services/identifier_channel.dart';
 import 'services/install_classifier.dart';
 import 'services/install_device_reads.dart';
+import 'services/install_failure.dart';
 import 'services/install_referrer_service.dart';
 import 'services/install_state_store.dart';
 import 'services/link_deduper.dart';
@@ -53,8 +56,37 @@ final class FlutterAdtoImpl implements FlutterAdto {
   /// its streams for good) that sends every request through [httpClient].
   /// `FlutterAdto()` returns the new instance from then on.
   @visibleForTesting
-  static FlutterAdtoImpl resetForTest({http.Client? httpClient}) =>
-      _instance = FlutterAdtoImpl._internal(httpClient: httpClient);
+  static FlutterAdtoImpl resetForTest({http.Client? httpClient}) {
+    // The replaced SDK must not retry an install into the next test.
+    _instance._stopInstallRetries();
+    _instance._stopWatchingResume();
+    installRetryWaits = _defaultInstallRetryWaits;
+    installRetrySpacing = _defaultInstallRetrySpacing;
+    return _instance = FlutterAdtoImpl._internal(httpClient: httpClient);
+  }
+
+  /// In-session install retries. After a try that failed for a reason that
+  /// may pass (no connection, a timeout, a 5xx), the next try waits this
+  /// long; the last wait repeats while the app runs.
+  static const _defaultInstallRetryWaits = [
+    Duration(seconds: 30),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+    Duration(minutes: 10),
+  ];
+  @visibleForTesting
+  static List<Duration> installRetryWaits = _defaultInstallRetryWaits;
+
+  /// The least time between a try's end and a retry that the app coming
+  /// back, or an event batch that went through, starts early.
+  static const _defaultInstallRetrySpacing = Duration(seconds: 30);
+  @visibleForTesting
+  static Duration installRetrySpacing = _defaultInstallRetrySpacing;
+
+  /// How long an event batch with no install id waits for an install try,
+  /// so it can carry the id. The longest try ends within a minute; the
+  /// batch goes anyway after this.
+  static const Duration _eventsWaitForInstall = Duration(seconds: 45);
 
   /// Tests run on the host: true stands in for iOS in the first-launch
   /// pasteboard read and the text size, so the harness can drive them.
@@ -137,9 +169,35 @@ final class FlutterAdtoImpl implements FlutterAdto {
   /// await so concurrent initialize() calls share one initialization.
   Future<void>? _initFuture;
 
-  /// In-flight or completed install tracking. Assigned before the first
-  /// await so the install POST cannot be issued twice in one process.
+  /// The install try in flight, or the finished one once the install is
+  /// settled (registered, or given up). Assigned before the first await so
+  /// two tries never run at once; cleared after a try that may be retried.
   Future<void>? _installTrackingFuture;
+
+  /// Whether a later try in this session may help: the last one failed for
+  /// a reason that may pass, or met another try's claim.
+  bool _installRetryable = false;
+
+  /// The next timed retry, and when it is due.
+  Timer? _installRetryTimer;
+  DateTime? _installRetryAt;
+
+  /// Timed retries scheduled in this session: picks the wait.
+  int _installRetries = 0;
+
+  /// When the last install try in this session ended, and why it failed
+  /// (null when it did not fail).
+  DateTime? _installTryEndedAt;
+  String? _installLastFailure;
+
+  /// The first-launch pasteboard read, once per process: a retry in the
+  /// same session reuses it instead of reading (and on iOS asking) again.
+  Future<({_PastedLink? read, Future<_PastedLink?>? late})>? _clipboardRead;
+
+  /// Tries a failed install again when the app comes back.
+  late final _resumeObserver = _ResumeObserver(
+    () => unawaited(_retryInstall(force: true)),
+  );
 
   /// Post-install telemetry: durable event queue + persisted SDK
   /// state (customer id / opt-out). Events batch to POST /api/v1/events.
@@ -265,6 +323,7 @@ final class FlutterAdtoImpl implements FlutterAdto {
       // handled inside _setupAppLinks and must not be rejected as "not
       // initialized" (and must be able to log its click).
       _initialized = true;
+      _watchResume();
 
       // The app's settings from the dashboard (Facebook App ID, OEM
       // referrers, the pasteboard read) before the install registration
@@ -1280,10 +1339,130 @@ final class FlutterAdtoImpl implements FlutterAdto {
       );
       return Future.value();
     }
-    return _installTrackingFuture ??= _trackAppInstallOnce();
+    return _installTrackingFuture ??= _runInstallTry();
   }
 
-  Future<void> _trackAppInstallOnce() async {
+  /// One install try, then what follows it in this session: nothing once
+  /// the install is settled; a timed retry after a failure that may pass,
+  /// or when another try's claim runs out.
+  Future<void> _runInstallTry() async {
+    final run = await _trackAppInstallOnce();
+    // Disposed or replaced while the try ran: nothing follows it.
+    if (_config == null || !identical(_instance, this)) return;
+    _installTryEndedAt = DateTime.now();
+    _installLastFailure = run.reason;
+    _stopInstallRetries();
+    switch (run.kind) {
+      case _InstallRunKind.settled:
+        _installRetryable = false;
+      case _InstallRunKind.inFlight:
+        _installTrackingFuture = null;
+        _installRetryable = true;
+        _scheduleInstallRetry(run.recheckIn!);
+      case _InstallRunKind.failed:
+        _installTrackingFuture = null;
+        _installRetryable = isTransientInstallFailure(run.reason!);
+        if (_installRetryable) {
+          final waits = installRetryWaits;
+          final wait =
+              waits[_installRetries < waits.length
+                  ? _installRetries
+                  : waits.length - 1];
+          final asked = run.retryAfter;
+          // A server's Retry-After longer than the wait is honoured.
+          _scheduleInstallRetry(asked != null && asked > wait ? asked : wait);
+          _installRetries++;
+        }
+    }
+  }
+
+  void _scheduleInstallRetry(Duration wait) {
+    _installRetryAt = DateTime.now().add(wait);
+    _installRetryTimer = Timer(wait, () {
+      // Due now, whatever the wall clock says: the timer's clock is the
+      // monotonic one, and a retry skipped here would not come back.
+      _installRetryTimer = null;
+      _installRetryAt = null;
+      unawaited(_retryInstall(force: false));
+    });
+  }
+
+  /// No timed retry pending (a try started, collection off, dispose).
+  void _stopInstallRetries() {
+    _installRetryTimer?.cancel();
+    _installRetryTimer = null;
+    _installRetryAt = null;
+  }
+
+  /// Starts the install again unless a try is running, the install is
+  /// settled, or the last try failed for a reason the same request would
+  /// meet again (that waits for the next launch). A timed retry waits until
+  /// it is due; a [force]d one (the app came back, an event batch went
+  /// through: the connection may be back) only [installRetrySpacing].
+  Future<void> _retryInstall({required bool force}) {
+    final running = _installTrackingFuture;
+    if (running != null) return running;
+    if (!_installRetryable || _config == null || !_sdkState.enabled) {
+      return Future.value();
+    }
+    final now = DateTime.now();
+    if (force) {
+      // A working connection says nothing of a server that refused.
+      final failure = _installLastFailure;
+      if (failure != null && !isTransportFailure(failure)) {
+        return Future.value();
+      }
+      final ended = _installTryEndedAt;
+      if (ended != null && now.difference(ended) < installRetrySpacing) {
+        return Future.value();
+      }
+    } else {
+      final at = _installRetryAt;
+      if (at != null && now.isBefore(at)) return Future.value();
+    }
+    _stopInstallRetries();
+    return _trackAppInstallIfNeeded();
+  }
+
+  /// Whether a timed install retry is due now.
+  bool get _installRetryDue {
+    if (!_installRetryable || _installTrackingFuture != null) return false;
+    final at = _installRetryAt;
+    return at == null || !DateTime.now().isBefore(at);
+  }
+
+  /// Before an event batch with no install id: the install try in flight,
+  /// or a retry that is due, runs first, for at most
+  /// [_eventsWaitForInstall], so the batch can carry the id.
+  Future<void> _installBeforeEvents() async {
+    if (_lastInstallId != null) return;
+    final attempt =
+        _installTrackingFuture ??
+        (_installRetryDue ? _retryInstall(force: false) : null);
+    if (attempt == null) return;
+    try {
+      await attempt.timeout(_eventsWaitForInstall);
+    } catch (_) {}
+  }
+
+  void _watchResume() {
+    try {
+      WidgetsBinding.instance
+        ..removeObserver(_resumeObserver)
+        ..addObserver(_resumeObserver);
+    } catch (_) {
+      // No Flutter binding (a pure Dart isolate): no resume retries.
+    }
+  }
+
+  void _stopWatchingResume() {
+    try {
+      WidgetsBinding.instance.removeObserver(_resumeObserver);
+    } catch (_) {}
+  }
+
+  /// One install registration try: how it ended, and why it failed.
+  Future<_InstallRun> _trackAppInstallOnce() async {
     try {
       // Package provenance first: its first-install time validates the
       // sentinel against a restored backup (InstallStateStore).
@@ -1305,15 +1484,25 @@ final class FlutterAdtoImpl implements FlutterAdto {
         case InstallDecisionKind.alreadyTracked:
           _lastInstallId ??= decision.state?.installId ?? _sdkState.installId;
           _log('App install already tracked - skipping');
-          return;
+          return const _InstallRun.settled();
         case InstallDecisionKind.inFlight:
-          _log('App install registration already in flight - skipping');
-          return;
+          // Another try holds the claim; look again when it runs out.
+          final attemptedAt = decision.state?.attemptedAt;
+          final left =
+              attemptedAt == null
+                  ? InstallStateStore.pendingClaimTtl
+                  : InstallStateStore.pendingClaimTtl -
+                      DateTime.now().difference(attemptedAt);
+          _log('App install registration already in flight - checking again');
+          return _InstallRun.inFlight(
+            (left.isNegative ? Duration.zero : left) +
+                const Duration(seconds: 1),
+          );
         case InstallDecisionKind.abandoned:
           _log(
-            'App install registration abandoned after ${InstallStateStore.maxAttempts} attempts',
+            'App install registration abandoned: not registered within ${InstallStateStore.maxAge.inDays} days',
           );
-          return;
+          return const _InstallRun.settled();
         case InstallDecisionKind.start:
           break;
       }
@@ -1375,15 +1564,26 @@ final class FlutterAdtoImpl implements FlutterAdto {
           _pendingPaste = null;
           unawaited(_claimClipboard(pendingPaste, source: 'paste_control'));
         }
+        return const _InstallRun.settled();
       } catch (e) {
-        // Downgrade the claim to a retry marker: the next launch re-POSTs
-        // (bounded by the attempt cap) with the SAME install_attempt_id.
-        await _installState.markFailed(e.toString());
-        _log('Failed to track app install: $e');
+        // Downgrade the claim to a retry marker: a later try, in this
+        // session or a later launch, re-POSTs with the SAME
+        // install_attempt_id and says why this one failed.
+        final reason = installFailureReason(e);
+        await _installState.markFailed(reason);
+        _log('Failed to track app install ($reason): $e');
+        final details = e is AdtoError ? e.details : null;
+        final retryAfterMs = details?['retry_after_ms'];
+        return _InstallRun.failed(
+          reason,
+          retryAfter:
+              retryAfterMs is int ? Duration(milliseconds: retryAfterMs) : null,
+        );
       }
     } catch (e) {
       _log('Failed to track app install: $e');
       // Don't throw - this shouldn't break initialization
+      return const _InstallRun.failed('other');
     }
   }
 
@@ -1529,7 +1729,7 @@ final class FlutterAdtoImpl implements FlutterAdto {
     final clipboardFuture =
         state.recoveredFrom != null
             ? Future.value((read: null, late: null))
-            : _readClipboardAdToUrl();
+            : (_clipboardRead ??= _readClipboardAdToUrl());
     final adIdFuture = _readAdvertisingId(config);
     final asaFuture =
         Platform.isIOS && config.collectsAppleSearchAdsToken
@@ -1625,6 +1825,8 @@ final class FlutterAdtoImpl implements FlutterAdto {
       installAttemptId: state.installAttemptId,
       recoveredFrom: state.recoveredFrom,
       attempt: state.attempt,
+      previousError:
+          state.attempt > 1 ? previousErrorForWire(state.lastError) : null,
       createdAtClient: state.createdAt.toUtc().toIso8601String(),
       sentAtClient: DateTime.now().toUtc().toIso8601String(),
       referrerStatus: referrer.status,
@@ -2007,6 +2209,7 @@ final class FlutterAdtoImpl implements FlutterAdto {
     List<Map<String, Object?>> batch,
   ) async {
     try {
+      await _installBeforeEvents();
       final deviceId = await _deviceIdForTelemetry();
       final body = jsonEncode({
         if (deviceId != null) 'device_id': deviceId,
@@ -2038,6 +2241,8 @@ final class FlutterAdtoImpl implements FlutterAdto {
             unawaited(_recoverInstall());
           }
         } catch (_) {}
+        // The connection works again: a failed install is tried now.
+        if (_lastInstallId == null) unawaited(_retryInstall(force: true));
         return EventSendOutcome.sent;
       }
       if (shouldDropEventBatch(response.statusCode)) {
@@ -2203,6 +2408,7 @@ final class FlutterAdtoImpl implements FlutterAdto {
       _consentGeneration++;
       _parkedLinks.clear();
       _eventQueue.stop();
+      _stopInstallRetries();
       return;
     }
     if (was) return;
@@ -2304,11 +2510,54 @@ final class FlutterAdtoImpl implements FlutterAdto {
     // on disk for the next launch.
     await _eventQueue.flush();
     _eventQueue.stop();
+    _stopInstallRetries();
+    _stopWatchingResume();
     _httpClient.close();
     _initialized = false;
     _config = null;
     _initFuture = null;
     _installTrackingFuture = null;
+  }
+}
+
+enum _InstallRunKind { settled, inFlight, failed }
+
+/// How one install try ended.
+class _InstallRun {
+  /// Registered (now or before), or given up: nothing more this session.
+  const _InstallRun.settled()
+    : kind = _InstallRunKind.settled,
+      reason = null,
+      recheckIn = null,
+      retryAfter = null;
+
+  /// Another try holds the claim: look again after [recheckIn].
+  const _InstallRun.inFlight(Duration this.recheckIn)
+    : kind = _InstallRunKind.inFlight,
+      reason = null,
+      retryAfter = null;
+
+  /// Failed for [reason] (install_failure.dart); [retryAfter] when the
+  /// server asked for a wait.
+  const _InstallRun.failed(String this.reason, {this.retryAfter})
+    : kind = _InstallRunKind.failed,
+      recheckIn = null;
+
+  final _InstallRunKind kind;
+  final String? reason;
+  final Duration? recheckIn;
+  final Duration? retryAfter;
+}
+
+/// Calls [onResume] when the app comes back to the foreground.
+class _ResumeObserver extends WidgetsBindingObserver {
+  _ResumeObserver(this.onResume);
+
+  final void Function() onResume;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) onResume();
   }
 }
 

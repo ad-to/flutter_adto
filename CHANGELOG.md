@@ -5,6 +5,38 @@ All notable changes to flutter_adto are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- **An install that fails at the first launch is tried again in the same session.** It used to
+  wait for the next launch while `identify` and events, which ride their own retrying queue, went
+  through, so the dashboard showed customers with no install. A failed try is now retried in
+  the same session after 30 seconds and then longer waits (the last, 10 minutes, repeats). After
+  a failed connection (no network, a timeout) it is also tried at once when the app comes back to
+  the foreground or a queued event goes through; a server that answered with a 5xx, 408 or 429
+  keeps the waits, and a longer `Retry-After`, so waiting phones never hammer it. A refusal the
+  same request would meet again (any other 4xx) still waits for the next launch.
+- **An event batch with no install id waits for the install.** Before the install is
+  registered, a batch first waits, at most 45 seconds, for an install try that is in flight or
+  due, so `identify` carries the install id. `flush()`, `logout()` and `dispose()` can take that
+  long in that case.
+- **A relaunch soon after the app was closed mid-try no longer skips the install.** Another try's
+  claim held for 5 minutes; it now holds for 90 seconds (the longest try ends within a minute),
+  and the session checks again when it runs out.
+- **The SDK no longer gives up after ten failed launches.** It keeps trying until the install is
+  14 days old, however many tries that takes, and an install an earlier version gave up on is
+  tried again while it is younger than that.
+- **A retry in the same session reuses the first-launch pasteboard read** instead of reading
+  again (on iOS, asking again).
+
+### Added
+
+- **`previous_error` on a retried install registration**
+  (`AdtoAppInstallRequest.previousError`): why the try before it failed — `timeout`, `dns`,
+  `tls`, `connection`, `http_<status>` with the server's error code (`http_401:stale_timestamp`),
+  `interrupted` (the app was closed first) or `other`. A short word, never an error's text.
+
 ## [1.0.1] - 2026-11-17
 
 ### Fixed
