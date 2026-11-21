@@ -30,6 +30,10 @@ class Harness {
   /// What the native getDeviceId answers (null: nothing).
   String? deviceId;
 
+  /// When set, getDeviceId answers only once this completes (a read that
+  /// hangs).
+  Completer<String?>? deviceIdHold;
+
   /// Canned answers by path, ahead of the defaults.
   final responses = <String, String>{};
 
@@ -80,7 +84,7 @@ class Harness {
     messenger.setMockMethodCallHandler(_identifiers, (call) async {
       switch (call.method) {
         case 'getDeviceId':
-          return deviceId;
+          return deviceIdHold != null ? deviceIdHold!.future : deviceId;
         case 'pasteboardChangeCount':
           return pasteboardChangeCount;
         case 'pasteboardHasUrl':
@@ -111,27 +115,50 @@ class Harness {
         File(
           'test/fixtures/wire/install-verdict-organic.json',
         ).readAsStringSync();
-    FlutterAdtoImpl.resetForTest(
-      httpClient: MockClient((request) async {
-        requests.add(request);
-        final answered = await answer?.call(request);
-        if (answered != null) return answered;
-        final json = {'content-type': 'application/json'};
-        final canned = responses[request.url.path];
-        if (canned != null) return http.Response(canned, 200, headers: json);
-        if (request.url.path == '/api/v1/app-installs') {
-          return http.Response(organic, 200, headers: json);
-        }
-        if (request.url.path.startsWith('/api/v1/resolve/')) {
-          return http.Response(
-            File('test/fixtures/wire/resolution.json').readAsStringSync(),
-            200,
-            headers: json,
-          );
-        }
-        return http.Response('{"ok":true}', 200, headers: json);
-      }),
+    _client = MockClient((request) async {
+      requests.add(request);
+      final answered = await answer?.call(request);
+      if (answered != null) return answered;
+      final json = {'content-type': 'application/json'};
+      final canned = responses[request.url.path];
+      if (canned != null) return http.Response(canned, 200, headers: json);
+      if (request.url.path == '/api/v1/app-installs') {
+        return http.Response(organic, 200, headers: json);
+      }
+      if (request.url.path.startsWith('/api/v1/resolve/')) {
+        return http.Response(
+          File('test/fixtures/wire/resolution.json').readAsStringSync(),
+          200,
+          headers: json,
+        );
+      }
+      return http.Response('{"ok":true}', 200, headers: json);
+    });
+    FlutterAdtoImpl.resetForTest(httpClient: _client);
+  }
+
+  late http.Client _client;
+
+  /// A later launch of the app: a fresh SDK object, and stores that start
+  /// from what the earlier launch left on disk.
+  Future<void> relaunch() async {
+    Future<Directory> provider() async => dir;
+    await SdkStateStore().resetForTest(
+      directoryProvider: provider,
+      simulateRestart: true,
     );
+    await InstallStateStore().resetForTest(
+      directoryProvider: provider,
+      keepFile: true,
+    );
+    await EventQueueService().resetForTest(
+      directoryProvider: provider,
+      keepFile: true,
+    );
+    SdkConfigStore().resetForTest(directoryProvider: provider);
+    DeviceIdentityService().resetForTest();
+    FlutterAdtoImpl.resetForTest(httpClient: _client);
+    requests.clear();
   }
 
   Future<void> tearDown() async {
@@ -204,6 +231,71 @@ void main() {
     expect(h.paths, contains('POST /api/v1/clicks'));
     expect(h.paths, contains('POST /api/v1/app-opens'));
   });
+
+  test(
+    'a link that opens the app on a later launch sends the device id with the open',
+    () async {
+      h.deviceId = 'device-1';
+      await FlutterAdto().initialize(config);
+      await h.settle();
+      expect(h.paths, contains('POST /api/v1/app-installs'));
+
+      await h.relaunch();
+      h.initialLink = 'https://demo.adto.app/spring';
+      await FlutterAdto().initialize(config);
+      await h.settle();
+      expect(h.paths, isNot(contains('POST /api/v1/app-installs')));
+      final open = h.requests.singleWhere(
+        (r) => r.url.path == '/api/v1/app-opens',
+      );
+      final body = jsonDecode(open.body) as Map<String, dynamic>;
+      expect(body['device_id'], 'device-1');
+      expect(body['install_id'], '00000002-0000-4000-8000-000000000000');
+    },
+  );
+
+  test(
+    'an open on a later launch is still sent when the device id read hangs',
+    () async {
+      await FlutterAdto().initialize(config);
+      await h.settle();
+
+      await h.relaunch();
+      h.deviceIdHold = Completer<String?>();
+      h.initialLink = 'https://demo.adto.app/spring';
+      await FlutterAdto().initialize(config);
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
+      final open = h.requests.singleWhere(
+        (r) => r.url.path == '/api/v1/app-opens',
+      );
+      expect((jsonDecode(open.body) as Map).containsKey('device_id'), isFalse);
+      h.deviceIdHold!.complete(null);
+    },
+  );
+
+  test(
+    'an open on a later launch carries no device id when the device tier is off',
+    () async {
+      const noDevice = AdtoConfig(
+        apiKey: 'adto_0123456789abcdef0123456789abcdef',
+        baseUrl: 'https://api.adto.app',
+        linkRootDomain: 'adto.app',
+        collect: {},
+      );
+      h.deviceId = 'device-1';
+      await FlutterAdto().initialize(noDevice);
+      await h.settle();
+
+      await h.relaunch();
+      h.initialLink = 'https://demo.adto.app/spring';
+      await FlutterAdto().initialize(noDevice);
+      await h.settle();
+      final open = h.requests.singleWhere(
+        (r) => r.url.path == '/api/v1/app-opens',
+      );
+      expect((jsonDecode(open.body) as Map).containsKey('device_id'), isFalse);
+    },
+  );
 
   test(
     'the click report carries the adto_* and utm_* values, never the rest of the URL',
