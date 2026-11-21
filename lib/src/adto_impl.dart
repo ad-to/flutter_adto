@@ -1279,6 +1279,10 @@ final class FlutterAdtoImpl implements FlutterAdto {
       try {
         appVersion = (await _getAppInfo()).version;
       } catch (_) {}
+      // Read rather than cached: after the first launch the install step
+      // stops early and never caches the id, and most opens come later.
+      // Bounded, so a read that hangs costs the id and not the open.
+      final deviceId = await _guard(_deviceIdForTelemetry);
       final body = jsonEncode({
         if (clickId != null) 'click_id': clickId,
         'username': username,
@@ -1286,7 +1290,7 @@ final class FlutterAdtoImpl implements FlutterAdto {
         'app_version': appVersion,
         'os': Platform.operatingSystem,
         // device anchors are best-effort; opens are valid without them
-        if (_lastDeviceId != null) 'device_id': _lastDeviceId,
+        if (deviceId != null) 'device_id': deviceId,
         if (_lastInstallId != null) 'install_id': _lastInstallId,
       });
       final response = await _httpClient
