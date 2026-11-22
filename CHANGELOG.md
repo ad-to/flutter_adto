@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- **`AdtoLink.forwardQuery` and `AdtoLink.createdVia`.** The server now returns whether a link
+  copies a tap's own query parameters onto its web destinations, and where the link was made
+  (`dashboard`, `api`, `sdk` or `mcp`; null for an older link whose origin is unknown). The wire
+  fixtures are synced from the server.
+
 ### Fixed
 
 - **An install that fails at the first launch is tried again in the same session.** It used to
