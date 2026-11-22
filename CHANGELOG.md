@@ -66,16 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-11-12
 
-flutter_adto is the SDK of AdTo, a new service. It starts from flutter_dectog 1.0.x, the DecTog
-service's SDK, with every name made AdTo's; it shares no names or device data with it. See
-"Moving from flutter_dectog" in the README.
+First release of flutter_adto, the Flutter SDK for AdTo.
 
 - **Package:** `flutter_adto` (`package:flutter_adto/flutter_adto.dart`), and
-  `flutter_adto_adid` for the advertising identifier. The iOS Swift package and pod, the Android
-  plugin (`app.adto.flutter_adto`) and the method channels are renamed too, so the two plugins
-  never clash in one app.
-- **Types:** every `Dectog` prefix becomes `Adto`: `FlutterAdto`, `AdtoConfig`, `AdtoLink`,
-  `AdtoLinkClick`, `AdtoError`, `AdtoPasteButton`, `AdtoNavigatorObserver` and the rest.
+  `flutter_adto_adid` for the advertising identifier. iOS through Swift Package Manager or
+  CocoaPods; the Android plugin is `app.adto.flutter_adto`.
+- **Types:** `FlutterAdto`, `AdtoConfig`, `AdtoLink`, `AdtoLinkClick`, `AdtoError`,
+  `AdtoPasteButton`, `AdtoNavigatorObserver` and the rest, all with the `Adto` prefix.
 - **Hosts:** `AdtoConfig.defaultBaseUrl` is `https://api.adto.app` and
   `defaultLinkRootDomain` is `adto.app`.
 - **Wire:** the `x-adto-*` request headers (`x-adto-sdk: flutter_adto/<version>`), the
