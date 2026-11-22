@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An app open on a later launch carries the device id.** The id was taken from a copy that only
+  the first launch's install registration filled, so a link that opened the app after that sent
+  the open with its install id but no device id. The open now reads the id the way the daily
+  ping does, and still leaves it out when `AdtoConfig.collect` turns the device tier off.
 - **An install that fails at the first launch is tried again in the same session.** It used to
   wait for the next launch while `identify` and events, which ride their own retrying queue, went
   through, so the dashboard showed customers with no install. A failed try is now retried in
