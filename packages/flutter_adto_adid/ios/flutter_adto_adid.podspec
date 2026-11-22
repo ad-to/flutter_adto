@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'flutter_adto_adid'
-  s.version          = '1.0.1'
+  s.version          = '1.1.0'
   s.summary          = 'The IDFA (after App Tracking Transparency) for the AdTo Flutter SDK.'
   s.description      = <<-DESC
   Reads the advertising identifier once App Tracking Transparency allows it

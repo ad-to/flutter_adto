@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'flutter_adto'
-  s.version         = '1.0.1'
+  s.version         = '1.1.0'
   s.summary          = 'Device identifier, install-state and pasteboard channel for the AdTo Flutter SDK.'
   s.description      = <<-DESC
   First-party device identifier (plain IDFV), install/update/reinstall

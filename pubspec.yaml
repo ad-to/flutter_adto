@@ -2,7 +2,7 @@ name: flutter_adto
 description: AdTo for Flutter apps. Deep links that open the app, deferred deep links that
   survive the install, and install attribution.
 
-version: 1.0.1
+version: 1.1.0
 
 homepage: https://adto.app
 repository: https://github.com/ad-to/flutter_adto
