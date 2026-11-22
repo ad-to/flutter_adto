@@ -3,8 +3,8 @@
 flutter_adto and flutter_adto_adid 1.0.0 went out by hand on 2026-11-12 (see First publish);
 later versions publish from a tag once automated publishing is set up. It started from flutter_dectog, the DecTog service's SDK (1.0.0 on pub.dev since
 2026-11-04), which is maintained on the `flutter_dectog-1.x` branch and released with `flutter_dectog-v<version>`
-tags; the `v<version>` tags belong to flutter_adto (`v1.0.0` is flutter_dectog's, from before
-the rename). Versions follow semantic versioning: a breaking change to the public API needs a major
+tags; the `v<version>` tags belong to flutter_adto (flutter_dectog 1.0.0, first tagged `v1.0.0`
+before the rename, is `flutter_dectog-v1.0.0`). Versions follow semantic versioning: a breaking change to the public API needs a major
 version. CI runs `flutter pub publish --dry-run` on every push so the package
 stays publishable.
 
@@ -44,8 +44,8 @@ the first version went out by hand: flutter_adto and `flutter_adto_adid` 1.0.0 o
 (steps 1 and 4 done; steps 2, 3 and 5 are the owner's on pub.dev and GitHub).
 
 1. `flutter pub publish` from a clean checkout of `main`, signed in as the publisher
-   account. No tag: `v1.0.0` already names flutter_dectog's release; flutter_adto's first
-   tag is its next version.
+   account, then tag the published commit by hand (`v1.0.0` is the merge of the 1.0.0
+   release PR; the tag workflow cannot publish a version that is already on pub.dev).
 2. On pub.dev, package admin page: set the publisher, then enable
    "Automated publishing" from GitHub Actions for `ad-to/flutter_adto`, tag
    pattern `v{{version}}`, and require the `pub.dev` environment.
