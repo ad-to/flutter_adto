@@ -23,9 +23,7 @@ the Kotlin and Swift.
 
 ## Rules
 
-- flutter_adto is the SDK of AdTo, a new service; it shares no names or
-  device data with flutter_dectog (the DecTog service's SDK, maintained on
-  the `flutter_dectog-1.x` branch). Once published, the public API follows
+- flutter_adto is the SDK of AdTo. Once published, the public API follows
   semantic versioning; a removed, renamed or retyped member needs a major
   version. Never publish to pub.dev without being asked.
 - The on-device names (the `adto` folder, `.adto_*.json`, the Keychain
