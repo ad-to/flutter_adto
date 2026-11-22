@@ -5,7 +5,7 @@ All notable changes to flutter_adto are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [1.1.0] - 2026-11-22
 
 ### Added
 
@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies a tap's own query parameters onto its web destinations, and where the link was made
   (`dashboard`, `api`, `sdk` or `mcp`; null for an older link whose origin is unknown). The wire
   fixtures are synced from the server.
+- **`previous_error` on a retried install registration**
+  (`AdtoAppInstallRequest.previousError`): why the try before it failed — `timeout`, `dns`,
+  `tls`, `connection`, `http_<status>` with the server's error code (`http_401:stale_timestamp`),
+  `interrupted` (the app was closed first) or `other`. A short word, never an error's text.
 
 ### Fixed
 
@@ -46,13 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (about 20 seconds in a test). The read now runs on a background queue: the app keeps drawing,
   `initialize()` returns once the install is registered, and a late "Allow Paste" still upgrades
   the install through its claim.
-
-### Added
-
-- **`previous_error` on a retried install registration**
-  (`AdtoAppInstallRequest.previousError`): why the try before it failed — `timeout`, `dns`,
-  `tls`, `connection`, `http_<status>` with the server's error code (`http_401:stale_timestamp`),
-  `interrupted` (the app was closed first) or `other`. A short word, never an error's text.
 
 ## [1.0.1] - 2026-11-17
 

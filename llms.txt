@@ -1,4 +1,4 @@
-# flutter_adto 1.0.1
+# flutter_adto 1.1.0
 
 > Flutter SDK for AdTo: links that open the app when it is installed and the store when it is not, deferred deep links, install attribution and post-install events. Hosted at https://api.adto.app.
 

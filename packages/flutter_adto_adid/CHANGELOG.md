@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.0] - 2026-11-22
+
+No changes to the package. Released with flutter_adto 1.1.0, whose version it
+follows.
+
 ## [1.0.1] - 2026-11-17
 
 No changes to the package. Released with flutter_adto 1.0.1, whose version it
