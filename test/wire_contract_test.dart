@@ -95,6 +95,8 @@ void main() {
     expect(l.iosTapToStore, isNull);
     expect(l.mobileInterstitial, isNull);
     expect(l.appendClickId, isNull);
+    expect(l.forwardQuery, isNull);
+    expect(l.createdVia, 'api');
     expect(l.routingRules, isNull);
     expect(l.templateId, isNull);
     expect(l.utmSource, isNull);

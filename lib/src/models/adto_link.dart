@@ -65,6 +65,16 @@ class AdtoLink {
   /// (or the template's value).
   final bool? appendClickId;
 
+  /// Whether a tap's own query parameters (a share-time ref, an item id,
+  /// `utm_*`) are copied onto the link's web destinations; null is off
+  /// (or the template's value).
+  final bool? forwardQuery;
+
+  /// Where the link was made: `dashboard`, `api` (an account key), `sdk`
+  /// (an SDK key) or `mcp` (the MCP server); null for an older link
+  /// whose origin is unknown.
+  final String? createdVia;
+
   /// Geo and language routing rules, first match wins; null when
   /// the link has none.
   final List<AdtoRoutingRule>? routingRules;
@@ -125,6 +135,8 @@ class AdtoLink {
     this.iosTapToStore,
     this.mobileInterstitial,
     this.appendClickId,
+    this.forwardQuery,
+    this.createdVia,
     this.routingRules,
     this.templateId,
     this.utmSource,
@@ -174,6 +186,8 @@ class AdtoLink {
       iosTapToStore: json['ios_tap_to_store'] as bool?,
       mobileInterstitial: json['mobile_interstitial'] as bool?,
       appendClickId: json['append_click_id'] as bool?,
+      forwardQuery: json['forward_query'] as bool?,
+      createdVia: s('created_via'),
       routingRules:
           (json['routing_rules'] as List?)
               ?.map((r) => AdtoRoutingRule.fromJson(r as Map<String, dynamic>))
