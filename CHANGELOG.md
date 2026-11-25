@@ -5,6 +5,25 @@ All notable changes to flutter_adto are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-25
+
+### Added
+
+- **`AdtoClickParams.query`: data a share adds to a link, after the install too.** A link
+  shared as `https://you.adto.app/shop?product=camera&ref=u_1` gives the app
+  `{product: camera, ref: u_1}`. The server has returned these parameters on the install verdict
+  and its `routing` (`click_params.query`) since adto #138; the SDK now reads them and keeps them
+  in the cached verdict. On a warm open the SDK reads them from the opened URL with the server's
+  rules (no `adto_*`, `utm_*` or AdTo's own markers; the first value of a repeated key; at most
+  20 keys and 2 KB), so the app reads `clickParams?.query` the same way in both cases.
+
+### Changed
+
+- **`AdtoLinkClick.clickParams` (and `AdtoClickParams.fromUri`) is no longer `null` for a URL
+  that carries only its own parameters**: `https://you.adto.app/shop?product=camera` now gives
+  click params with only `query` set. A URL with neither `adto_*` values nor own parameters still
+  gives `null`.
+
 ## [1.1.0] - 2026-11-22
 
 ### Added

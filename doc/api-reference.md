@@ -245,7 +245,7 @@ The public resolve result, for permanent and temporary links. Only a live link r
 | `isResolved` | `bool get` | `linkResolution != null && error == null` |
 | `targetUrl` | `String? get` | `linkResolution?.target` |
 | `linkType` | `String? get` | `linkResolution?.type` |
-| `clickParams` | `AdtoClickParams? get` | The `adto_*` parameters of `originalUrl`, or `null` |
+| `clickParams` | `AdtoClickParams? get` | The `adto_*` parameters and the own parameters (`query`) of `originalUrl`, or `null` |
 
 Extension `AdtoLinkClickX` on `AdtoLinkClick`: `Map<String, String>? get queryParameters`, `String? queryParameter(String key)`, `String? get path`, `String? get host`, `String? get scheme`, `String? get fragment`, all read from `originalUrl`.
 
@@ -261,8 +261,9 @@ The per-click `adto_*` overrides.
 | `adgroup` | `String?` | `adto_adgroup` |
 | `creative` | `String?` | `adto_creative` |
 | `tracker` | `String?` | `adto_tracker` |
+| `query` | `Map<String, String>?` | The URL's own parameters (`?product=camera&ref=u_1`): data a share adds to a link, there after the install too. Without `adto_*`, `utm_*` and `_ch` / `_ipad` / `_ref`; the first value of a repeated key; at most 20 keys and 2 KB, a key over 64 or a value over 256 characters left out; `null` when none is left. A warm open reads it from the opened URL with the server's rules. |
 
-`bool get isEmpty`, `AdtoClickParams.fromJson(Map<String, dynamic>)` (the server's `click_params` shape), `static AdtoClickParams? fromUri(Uri uri)` (`null` when the URL carries none), `Map<String, dynamic> toJson()`.
+`bool get isEmpty`, `AdtoClickParams.fromJson(Map<String, dynamic>)` (the server's `click_params` shape), `static AdtoClickParams? fromUri(Uri uri)` (`null` when the URL carries no `adto_*` value and no own parameter), `Map<String, dynamic> toJson()`.
 
 ## Install models
 
