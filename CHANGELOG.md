@@ -14,8 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{product: camera, ref: u_1}`. The server has returned these parameters on the install verdict
   and its `routing` (`click_params.query`) since adto #138; the SDK now reads them and keeps them
   in the cached verdict. On a warm open the SDK reads them from the opened URL with the server's
-  rules (no `adto_*`, `utm_*` or AdTo's own markers; the first value of a repeated key; at most
-  20 keys and 2 KB), so the app reads `clickParams?.query` the same way in both cases.
+  rules (no `adto_*`, `utm_*` or AdTo's own markers; a repeated key at its first valid value, the
+  pairs in URL order; at most 20 keys and 2 KB), so the app reads `clickParams?.query` the same
+  way in both cases. On a `medium`-confidence install (`matched: false`) the parameters are on
+  `routing.clickParams.query`.
 
 ### Changed
 

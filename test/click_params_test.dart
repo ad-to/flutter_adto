@@ -92,6 +92,52 @@ void main() {
     expect(repeated?.query, {'a': '1', 'empty': ''});
   });
 
+  test(
+    'fromUri: a repeated key takes its first valid value, as the server does',
+    () {
+      final params = AdtoClickParams.fromUri(
+        Uri.parse(
+          'https://demo.adto.app/shop?ref=${'v' * 257}&ref=good&tab=%01&tab=ok',
+        ),
+      );
+      expect(params?.query, {'ref': 'good', 'tab': 'ok'});
+    },
+  );
+
+  test('fromUri applies the key limit in URL order', () {
+    // The server walks the pairs as written: a key whose first value was
+    // invalid takes the place of its later, valid one.
+    final middle = [for (var i = 0; i < 19; i++) 'k$i=v$i'].join('&');
+    final params = AdtoClickParams.fromUri(
+      Uri.parse(
+        'https://demo.adto.app/shop?a=${'v' * 257}&$middle&a=ok&last=1&7=x',
+      ),
+    );
+    expect(params!.query!.keys.length, 20);
+    expect(params.query!.keys.first, 'k0');
+    expect(params.query!.keys.last, 'a');
+    expect(params.query!['a'], 'ok');
+    expect(params.query!.containsKey('last'), isFalse);
+    expect(params.query!.containsKey('7'), isFalse);
+  });
+
+  test(
+    'fromUri decodes like the server: plus is a space, a bad escape stays',
+    () {
+      final params = AdtoClickParams.fromUri(
+        Uri.parse(
+          'https://demo.adto.app/shop?q=a+b%20c&flag&&pct=100%25&raw=%zz',
+        ),
+      );
+      expect(params?.query, {
+        'q': 'a b c',
+        'flag': '',
+        'pct': '100%',
+        'raw': '%zz',
+      });
+    },
+  );
+
   test('install response reads click_params.query and caches it', () {
     final response = AdtoAppInstallResponse.fromJson({
       'matched': true,

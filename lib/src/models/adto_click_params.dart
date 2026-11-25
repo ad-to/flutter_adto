@@ -35,7 +35,7 @@ class AdtoClickParams {
   /// survives the install.
   ///
   /// Without the `adto_*` and `utm_*` keys and AdTo's own markers (`_ch`,
-  /// `_ipad`, `_ref`); the first value of a repeated key; at most 20 keys
+  /// `_ipad`, `_ref`); a repeated key at its first valid value; at most 20 keys
   /// and 2 KB, a key over 64 or a value over 256 characters (or one with a
   /// control character) left out. `null` when none is left. On a warm open it
   /// is read from the opened URL with the same rules the server applies to a
@@ -103,27 +103,23 @@ class AdtoClickParams {
   static const _engineQueryKeys = {'_ch', '_ipad', '_ref'};
   static final _control = RegExp(r'[\u0000-\u001f\u007f]');
 
-  /// The server's reading of a tap's own parameters, so a warm open and a
-  /// deferred install give the app the same map.
+  /// The server's reading of a tap's own parameters (`readTapQuery`), so a
+  /// warm open and a deferred install give the app the same map. It walks
+  /// the pairs in URL order, as `URLSearchParams` does: a key is taken at its
+  /// first valid value, and the limits fall on the pairs as written.
   static Map<String, String>? _tapQuery(Uri uri) {
-    final Map<String, List<String>> all;
-    try {
-      all = uri.queryParametersAll;
-    } on FormatException {
-      return null;
-    }
     final out = <String, String>{};
     var bytes = 2; // {}
-    for (final MapEntry(:key, value: values) in all.entries) {
+    for (final (key, value) in _queryPairs(uri.query)) {
       if (out.length >= _maxQueryKeys) break;
       final k = key.toLowerCase();
       if (key.isEmpty ||
           k.startsWith('adto_') ||
           k.startsWith('utm_') ||
-          _engineQueryKeys.contains(k)) {
+          _engineQueryKeys.contains(k) ||
+          out.containsKey(key)) {
         continue;
       }
-      final value = values.first;
       if (key.length > _maxQueryKey ||
           value.length > _maxQueryValue ||
           _control.hasMatch(key) ||
@@ -139,6 +135,29 @@ class AdtoClickParams {
       bytes += size;
     }
     return out.isEmpty ? null : out;
+  }
+
+  /// The decoded `key=value` pairs of a query, in order, repeats kept; `+`
+  /// is a space and an empty pair (`&&`) is skipped, as in `URLSearchParams`.
+  static Iterable<(String, String)> _queryPairs(String query) sync* {
+    for (final pair in query.split('&')) {
+      if (pair.isEmpty) continue;
+      final eq = pair.indexOf('=');
+      yield (
+        _decode(eq < 0 ? pair : pair.substring(0, eq)),
+        eq < 0 ? '' : _decode(pair.substring(eq + 1)),
+      );
+    }
+  }
+
+  static String _decode(String component) {
+    try {
+      return Uri.decodeQueryComponent(component);
+    } on ArgumentError {
+      return component.replaceAll('+', ' ');
+    } on FormatException {
+      return component.replaceAll('+', ' ');
+    }
   }
 
   /// The string values of a JSON object; `null` when it has none.

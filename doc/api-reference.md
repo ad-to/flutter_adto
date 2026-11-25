@@ -261,7 +261,7 @@ The per-click `adto_*` overrides.
 | `adgroup` | `String?` | `adto_adgroup` |
 | `creative` | `String?` | `adto_creative` |
 | `tracker` | `String?` | `adto_tracker` |
-| `query` | `Map<String, String>?` | The URL's own parameters (`?product=camera&ref=u_1`): data a share adds to a link, there after the install too. Without `adto_*`, `utm_*` and `_ch` / `_ipad` / `_ref`; the first value of a repeated key; at most 20 keys and 2 KB, a key over 64 or a value over 256 characters left out; `null` when none is left. A warm open reads it from the opened URL with the server's rules. |
+| `query` | `Map<String, String>?` | The URL's own parameters (`?product=camera&ref=u_1`): data a share adds to a link, there after the install too. Without `adto_*`, `utm_*` and `_ch` / `_ipad` / `_ref`; a repeated key at its first valid value, the pairs taken in URL order; at most 20 keys and 2 KB, a key over 64 or a value over 256 characters left out; `null` when none is left. A warm open reads it from the opened URL with the server's rules. On a `medium`-confidence install (`matched: false`) it is on `routing.clickParams` instead. |
 
 `bool get isEmpty`, `AdtoClickParams.fromJson(Map<String, dynamic>)` (the server's `click_params` shape), `static AdtoClickParams? fromUri(Uri uri)` (`null` when the URL carries no `adto_*` value and no own parameter), `Map<String, dynamic> toJson()`.
 
